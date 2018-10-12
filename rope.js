@@ -1,3 +1,10 @@
+/*
+==================== BUG PRESENT ====================
+To avoid spring compression, the program checks if the final distance of the point
+is less than the allowed distance. It should actually check the vector movement of the point
+to consider cases where the elastic constant is too high and the point overshoots its neighboor's position.
+*/ 
+
 Renderer = {
     ctx: null,
     pause: false,
@@ -43,10 +50,22 @@ Renderer = {
     },
 
     buildRope: function() {
-        let rope = Catalogue.add(new Rope(500, 100));
+        let rope = Catalogue.add(new Rope(3000, 3000));
         rope.buildNext(30);
         rope.buildNext(30);
         rope.buildNext(40);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
         rope.buildNext(60);
         rope.buildNext(60);
         rope.buildNext(60);
@@ -102,16 +121,16 @@ Catalogue = {
 };
 
 Consts = {
+    // Making it so that 1000 pixels = 1 meter
+    scale: 0.1,
     pointOut: 13,
     pointIn: 10,
-    pointDist: 60,
-    pointDistAproxP: 60.001,
-    pointDistAproxM: 59.999,
+    pointDist: 300,
     rectHeight: 4,
-    ropeConst: 3500,
+    ropeConst: 3000,
     forceAdded: 10000,
     friction: 0.95,
-    floatMin: 0.0001,
+    floatMin: 0.0000001,
 }
 
 class Rope {
@@ -139,17 +158,17 @@ class Rope {
             const prev = this.points[i - 1];
             const next = this.points[i];
             const angle = Math.atan2(next.y - prev.y, next.x - prev.x);
-            ctx.translate((next.x + prev.x) / 2, (next.y + prev.y) / 2);
+            ctx.translate((next.x + prev.x) * Consts.scale / 2, (next.y + prev.y) * Consts.scale / 2);
             ctx.rotate(angle);
             ctx.fillStyle = "rgb(10, 10, 200)";
-            ctx.fillRect(-Consts.pointDist / 2, -Consts.rectHeight / 2, Consts.pointDist, Consts.rectHeight);
+            ctx.fillRect(-Consts.pointDist * Consts.scale / 2, -Consts.rectHeight / 2, Consts.pointDist * Consts.scale, Consts.rectHeight);
             ctx.setTransform(1, 0, 0, 1, 0, 0);
         }
     }
 
     doPhysics(dt) {
         this.points.forEach(function(o) {
-            o.addForce(Vector.fromIntDeg(1000, 90));
+            o.addForce(Vector.fromIntDeg(Consts.forceAdded, 90));
         });
         this.points.forEach(function(o) {
             o.doPhysicsForces();
@@ -178,19 +197,22 @@ class Point {
         // Outter line
         ctx.fillStyle = "rgb(0, 0, 0)";
         ctx.beginPath();
-        ctx.arc(this.x, this.y, Consts.pointOut, 0, 2 * Math.PI, false);
+        ctx.arc(this.x * Consts.scale, this.y * Consts.scale, Consts.pointOut, 0, 2 * Math.PI, false);
         ctx.fill();
         // Fill
         ctx.fillStyle = "rgb(40, 40, 200)";
         ctx.beginPath();
-        ctx.arc(this.x, this.y, Consts.pointIn, 0, 2 * Math.PI, false);
+        ctx.arc(this.x * Consts.scale, this.y * Consts.scale, Consts.pointIn, 0, 2 * Math.PI, false);
         ctx.fill();
     }
 
     doPhysicsForces() {
         const counterForces = function(pf, pi) {
             const dist = Vector.fromCoords(pf.x - pi.x, pf.y - pi.y);
-            if (dist.int > Consts.pointDistAproxP) {
+            if (dist.int > (Consts.pointDist + Consts.floatMin)) {
+                if (Logic.second_tick) {
+                    console.log((dist.int - Consts.pointDist) * Consts.ropeConst);
+                }
                 pf.addForce(new Vector((dist.int - Consts.pointDist) * Consts.ropeConst, dist.ang + Math.PI));
                 pi.addForce(new Vector((dist.int - Consts.pointDist) * Consts.ropeConst, dist.ang));
             }
@@ -220,7 +242,7 @@ class Point {
         // Make it so that it loses all velocity in direction of a neighbor if the spring would compress
         const noCompress = function(vi, vf) {
             const dist = Vector.fromCoords(vf.x - vi.x, vf.y - vi.y);
-            if (dist.int < Consts.pointDistAproxM) {
+            if (dist.int < (Consts.pointDist - Consts.floatMin)) {
                 // Returns the correct position
                 return Vector.fromCoords(vi.x, vi.y).add(new Vector(Consts.pointDist, dist.ang));
             }
