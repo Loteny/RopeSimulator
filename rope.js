@@ -1,6 +1,8 @@
 Renderer = {
     ctx: null,
+    pause: false,
     then: 0,
+    elapsed: 0,
 
     initialize: function() {
         window.addEventListener("keypress", Logic.keypress.bind(Logic), false);
@@ -14,7 +16,15 @@ Renderer = {
         let delta = now - this.then;
         this.then = now;
 
-        Logic.loop(delta);
+        this.elapsed += delta;
+        Logic.second_tick = this.elapsed >= 200 ? (this.elapsed -= 200, true) : false;
+
+        if (this.pause) {
+            requestAnimationFrame(this.loop.bind(this));
+            return;
+        }
+
+        Logic.loop(delta / 1000);
         this.render();
 
         requestAnimationFrame(this.loop.bind(this));
@@ -33,25 +43,38 @@ Renderer = {
     },
 
     buildRope: function() {
-        let rope = Catalogue.add(new Rope(100, 100));
+        let rope = Catalogue.add(new Rope(500, 100));
         rope.buildNext(30);
         rope.buildNext(30);
         rope.buildNext(40);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
+        rope.buildNext(60);
         rope.buildNext(60);
     },
 };
 
 Logic = {
+    second_tick: false,
+
     loop: function(dt) {
         let rope = Catalogue.getRope();
-        rope.doPhysics();
+        rope.doPhysics(dt);
+        window.p1 = rope.points[0];
+        window.p2 = rope.points[0];
     },
 
     keypress: function(e) {
         if (e.charCode === 32) {
             e.preventDefault();
             let p0 = Catalogue.getRope().points[0];
-            p0.force(new Vector(10, 90));
+            p0.addForce(new Vector(Consts.forceAdded, 0));
+        }
+        if (e.charCode === 112) {
+            Renderer.pause = !Renderer.pause;
         }
     }
 };
@@ -82,7 +105,13 @@ Consts = {
     pointOut: 13,
     pointIn: 10,
     pointDist: 60,
+    pointDistAproxP: 60.001,
+    pointDistAproxM: 59.999,
     rectHeight: 4,
+    ropeConst: 3500,
+    forceAdded: 10000,
+    friction: 0.95,
+    floatMin: 0.0001,
 }
 
 class Rope {
@@ -118,9 +147,15 @@ class Rope {
         }
     }
 
-    doPhysics() {
+    doPhysics(dt) {
         this.points.forEach(function(o) {
-            o.doPhysics();
+            o.addForce(Vector.fromIntDeg(1000, 90));
+        });
+        this.points.forEach(function(o) {
+            o.doPhysicsForces();
+        });
+        this.points.forEach(function(o) {
+            o.doPhysics(dt);
         });
     }
 };
@@ -132,8 +167,9 @@ class Point {
         this.prev = prev;
         this.next = next;
 
-        this.acceleration = 0;
-        this.velocity = 0;
+        this.force = new Vector(0, 0);
+        this.acceleration = new Vector(0, 0);
+        this.velocity = new Vector(0, 0);
 
         this.mass = 1;
     }
@@ -151,43 +187,108 @@ class Point {
         ctx.fill();
     }
 
-    doPhysics() {
+    doPhysicsForces() {
+        const counterForces = function(pf, pi) {
+            const dist = Vector.fromCoords(pf.x - pi.x, pf.y - pi.y);
+            if (dist.int > Consts.pointDistAproxP) {
+                pf.addForce(new Vector((dist.int - Consts.pointDist) * Consts.ropeConst, dist.ang + Math.PI));
+                pi.addForce(new Vector((dist.int - Consts.pointDist) * Consts.ropeConst, dist.ang));
+            }
+        }
         if (this.prev !== null) {
-            //
-        }
-        if (this.next !== null) {
-            //
+            counterForces(this, this.prev);
         }
     }
 
-    // "from" indicates where the force comes from
-    // If it comes from the previous point, it's -1. From the next point, 1. External forces are 0.
-    force(f, from=0) {
-        let obj = this;
-        let transfer = (pi, pf, new_from) => {
-            const angle_between_points = Point.angleOfLine(pi, pf);
-            const new_f = f;
-            console.log(obj);
-            console.log(new_f);
-            pi.force(new_f, new_from);
-        };
-        if (from !== 1 && this.next !== null) {
-            transfer(this.next, this, -1);
+    doPhysics(dt) {
+        if (this.prev === null) {
+            return;
         }
-        if (from !== -1 && this.prev !== null) {
-            transfer(this.prev, this, 1);
+
+        this.acceleration = new Vector(this.force.int / this.mass, this.force.ang);
+        this.force = new Vector(0, 0);
+
+        // Friction
+        this.velocity.mag(1 - (Consts.friction * dt));
+        this.velocity.add(new Vector(dt * this.acceleration.int, this.acceleration.ang));
+
+        const pos = Vector.fromCoords(this.x, this.y).add(new Vector(dt * this.velocity.int, this.velocity.ang));
+        this.move(pos);
+    }
+
+    move(pos) {
+        // Make it so that it loses all velocity in direction of a neighbor if the spring would compress
+        const noCompress = function(vi, vf) {
+            const dist = Vector.fromCoords(vf.x - vi.x, vf.y - vi.y);
+            if (dist.int < Consts.pointDistAproxM) {
+                // Returns the correct position
+                return Vector.fromCoords(vi.x, vi.y).add(new Vector(Consts.pointDist, dist.ang));
+            }
+            return vf;
+        }
+
+        // Moves this point checking for compression with the previous
+        if (this.prev !== null) {
+            let new_pos = noCompress(Vector.fromCoords(this.prev.x, this.prev.y), pos);
+            this.x = new_pos.x;
+            this.y = new_pos.y;
+        } else {
+            this.x = pos.x;
+            this.y = pos.y;
         }
     }
 
-    static angleOfLine(pi, pf) {
-        return Math.atan2(pf.y - pi.y, pf.x - pi.x);
+    addForce(f) {
+        this.force.add(f);
     }
 }
 
 class Vector {
     constructor(intensity, angle) {
         this.int = intensity;
-        this.ang = angle * Math.PI / 180;
+        this.ang = angle;
+        this.calculateFromIntAng();
+    }
+
+    add(v) {
+        this.x += v.x;
+        this.y += v.y;
+        this.calculateFromXY();
+        return this;
+    }
+
+    mag(x) {
+        this.int *= x;
+        this.calculateFromIntAng();
+        return this;
+    }
+
+    calculateFromIntAng() {
+        this.x = this.int * Math.cos(this.ang);
+        this.y = this.int * Math.sin(this.ang);
+        return this;
+    }
+
+    calculateFromXY() {
+        this.int = Math.sqrt(this.x * this.x + this.y * this.y);
+        this.ang = Math.atan2(this.y, this.x);
+        return this;
+    }
+
+    static fromCoords(x, y) {
+        let v = new Vector(0, 0);
+        v.x = x;
+        v.y = y;
+        v.calculateFromXY();
+        return v;
+    }
+
+    static angleOfLine(pi, pf) {
+        return Math.atan2(pf.y - pi.y, pf.x - pi.x);
+    }
+
+    static fromIntDeg(int, deg) {
+        return new Vector(int, deg * Math.PI / 180);
     }
 }
 
